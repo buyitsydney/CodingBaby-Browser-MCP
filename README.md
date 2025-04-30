@@ -1,4 +1,4 @@
-# MCP Chrome Server
+# CodingBaby Browser MCP
 
 This is a Model Context Protocol (MCP) tool server designed to communicate with a Chrome browser extension via WebSocket for browser automation control.
 
