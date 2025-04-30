@@ -1,9 +1,12 @@
 {
 	"name": "@sydneyassistent/chrome-server",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "MCP tool for communicating with a Chrome extension via WebSocket",
 	"main": "chrome-server.js",
 	"type": "module",
+	"bin": {
+		"chrome-server": "chrome-server.js"
+	},
 	"scripts": {
 		"start": "node chrome-server.js"
 	},
