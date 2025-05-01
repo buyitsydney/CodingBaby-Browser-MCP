@@ -1,4 +1,5 @@
 # CodingBaby Browser MCP
+[![smithery badge](https://smithery.ai/badge/@buyitsydney/codingbaby-browser-mcp)](https://smithery.ai/server/@buyitsydney/codingbaby-browser-mcp)
 
 This is a Model Context Protocol (MCP) tool server designed to communicate with a Chrome browser extension via WebSocket for browser automation control.
 
@@ -24,6 +25,14 @@ This server requires a companion Chrome extension to perform the actual browser 
 *   `set_viewport`: Sets the size (width and height) of the browser viewport.
 
 ## Installation
+
+### Installing via Smithery
+
+To install Chrome Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@buyitsydney/codingbaby-browser-mcp):
+
+```bash
+npx -y @smithery/cli install @buyitsydney/codingbaby-browser-mcp --client claude
+```
 
 If using the source code directly, navigate to the `mcp/chrome-server` directory and run:
 
