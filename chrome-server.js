@@ -12,17 +12,14 @@ import * as os from "os"
 // --- Added Signal Handling ---
 // Graceful shutdown handler
 async function gracefulShutdown(signal) {
-	// console.log(`Received ${signal}. Shutting down chrome-server...`); // Removed log
 	try {
 		// Ensure chromeClient is initialized before calling dispose
 		if (chromeClient) {
 			await chromeClient.dispose()
-			// console.log("Chrome client disposed."); // Removed log
 		}
 	} catch (error) {
 		console.error("Error during dispose:", error) // Keep error log (stderr)
 	} finally {
-		// console.log("Exiting chrome-server process."); // Removed log
 		process.exit(0) // Exit gracefully
 	}
 }
@@ -48,7 +45,7 @@ const DEFAULT_VIEWPORT = {
 
 // 创建MCP服务器
 const server = new McpServer({
-	name: "chrome-server",
+	name: "codingbaby-browser-mcp",
 	version: "1.0.0",
 })
 
@@ -66,7 +63,6 @@ class ChromeExtensionClient {
 	}
 
 	async initialize() {
-		// console.log("ChromeExtensionClient: Initializing WebSocket server...")
 		await this.startWebSocketServer()
 		return new Promise((resolve) => {
 			// 尝试等待连接建立
@@ -84,13 +80,11 @@ class ChromeExtensionClient {
 	async startWebSocketServer() {
 		// 如果服务器存在且正在监听，无需重新启动
 		if (this.wss && this.clientSocket && this.isReady) {
-			// console.log("ChromeExtensionClient: WebSocket server already running and client connected.")
 			return
 		}
 
 		// 如果服务器实例存在但可能已关闭或处于错误状态，先关闭它
 		if (this.wss) {
-			// console.log("ChromeExtensionClient: Existing WebSocket server found, ensuring it's closed before restart...")
 			await new Promise((resolve) => {
 				// 先关闭客户端连接
 				if (this.clientSocket && this.clientSocket.readyState !== WebSocket.CLOSED) {
@@ -101,7 +95,6 @@ class ChromeExtensionClient {
 					if (err) {
 						// console.error("ChromeExtensionClient: Error closing existing server before restart:", err)
 					}
-					// console.log("ChromeExtensionClient: Existing server closed.")
 					this.wss = null
 					this.isReady = false
 					this.targetTabId = null // 重置目标标签ID
@@ -112,7 +105,6 @@ class ChromeExtensionClient {
 			await new Promise((resolve) => setTimeout(resolve, 100))
 		}
 
-		// console.log("ChromeExtensionClient: Starting new WebSocket server...")
 		// 重置状态
 		this.isReady = false
 		this.clientSocket = null
@@ -121,12 +113,9 @@ class ChromeExtensionClient {
 		return new Promise((resolve, reject) => {
 			try {
 				this.wss = new WebSocketServer({ port: WEBSOCKET_PORT })
-				// console.log(`ChromeExtensionClient: WebSocket server listening on port ${WEBSOCKET_PORT}`)
 
 				this.wss.on("connection", (ws) => {
-					// console.log("ChromeExtensionClient: Chrome extension client connected.")
 					if (this.clientSocket && this.clientSocket.readyState === WebSocket.OPEN) {
-						// console.warn("ChromeExtensionClient: New client connected, closing previous one.")
 						this.clientSocket.close()
 					}
 					this.clientSocket = ws
@@ -150,7 +139,6 @@ class ChromeExtensionClient {
 					})
 
 					ws.on("close", () => {
-						// console.log("ChromeExtensionClient: Chrome extension client disconnected.")
 						if (this.clientSocket === ws) {
 							this.clientSocket = null
 							this.isReady = false
@@ -160,12 +148,10 @@ class ChromeExtensionClient {
 							this.targetTabId = null
 
 							// --- Modified shutdown logic ---
-							// console.log("ChromeExtensionClient: Client disconnected. Scheduling server process shutdown."); // Removed log
 							// Attempt cleanup but don't wait for it
 							this.dispose().catch((err) => console.error("Error during dispose on client disconnect:", err)) // Keep error log (stderr)
 							// Force exit after a short delay
 							setTimeout(() => {
-								// console.log("Exiting chrome-server process due to client disconnect."); // Removed log
 								process.exit(0)
 							}, 500) // Exit after 500ms
 							// --- End of modified logic ---
@@ -200,7 +186,6 @@ class ChromeExtensionClient {
 				})
 
 				this.wss.on("close", () => {
-					// console.log("ChromeExtensionClient: WebSocket server closed.")
 					this.wss = null
 					this.clientSocket = null
 					this.isReady = false
@@ -252,15 +237,34 @@ class ChromeExtensionClient {
 		this.pendingRequests.delete(requestId)
 
 		if (status === "error") {
+			console.error(`[DEBUG] Error response for command ${pendingRequest.command}: ${message.message}`)
 			pendingRequest.reject(new Error(message.message || `Command '${pendingRequest.command}' failed.`))
 		} else if (status === "ack" || status === "success") {
+			console.error(
+				`[DEBUG] Success/ack response for command ${pendingRequest.command}, has tabId: ${!!message.tabId}, current targetTabId: ${this.targetTabId}`,
+			)
+
 			// 在启动/导航完成后检查tabId
 			if (
 				(pendingRequest.command === "launch" || pendingRequest.command === "navigateToUrl") &&
 				message.command === "tabUpdated" &&
 				message.tabId
 			) {
+				console.error(`[DEBUG] Updating targetTabId in tabUpdated from ${this.targetTabId} to ${message.tabId}`)
 				this.targetTabId = message.tabId
+			}
+
+			// 处理click命令响应中的新标签页信息
+			if (pendingRequest.command === "click" && message.newTabOpened) {
+				console.error(
+					`[DEBUG] In handleMessageFromClient - click response with newTabOpened. New tabId: ${message.newTabId}, current targetTabId: ${this.targetTabId}`,
+				)
+
+				// 立即更新targetTabId
+				if (message.newTabId) {
+					console.error(`[DEBUG] Immediately updating targetTabId from ${this.targetTabId} to ${message.newTabId}`)
+					this.targetTabId = message.newTabId
+				}
 			}
 
 			// 更新当前URL
@@ -279,8 +283,13 @@ class ChromeExtensionClient {
 				currentMousePosition: message.currentMousePosition,
 				viewportSize: message.viewportSize,
 				analysisResult: message.analysisResult,
+				tabs: message.tabs,
 				tabId: message.tabId,
 				htmlContent: message.htmlContent,
+				// 确保将新标签页信息传递给click方法
+				...(message.newTabOpened && { newTabOpened: message.newTabOpened }),
+				...(message.newTabId && { newTabId: message.newTabId }),
+				...(message.newTabUrl && { newTabUrl: message.newTabUrl }),
 			})
 		} else {
 			pendingRequest.reject(new Error(`Received unhandled status '${status}' for command '${pendingRequest.command}'.`))
@@ -299,6 +308,7 @@ class ChromeExtensionClient {
 			"getFullHtml",
 			"get_viewport_size",
 			"takeAreaScreenshot",
+			"wait",
 		].includes(command)
 
 		const messageToSend = {
@@ -309,6 +319,8 @@ class ChromeExtensionClient {
 			...(includeTargetTab && this.targetTabId !== null && { targetTabId: this.targetTabId }),
 		}
 
+		console.error(`[DEBUG] Sending ${command} command with targetTabId=${includeTargetTab ? this.targetTabId : "none"}`)
+
 		if (!this.clientSocket || this.clientSocket.readyState !== WebSocket.OPEN) {
 			// console.error("ChromeExtensionClient: Cannot send message, client not connected or ready.")
 			throw new Error("Chrome extension client is not connected.")
@@ -316,7 +328,6 @@ class ChromeExtensionClient {
 
 		try {
 			const messageString = JSON.stringify(messageToSend)
-			// console.log(`ChromeExtensionClient: Sending message to client:`, messageToSend)
 			this.clientSocket.send(messageString)
 			return requestId
 		} catch (error) {
@@ -340,7 +351,6 @@ class ChromeExtensionClient {
 			}, timeoutMs)
 
 			this.pendingRequests.set(requestId, { resolve, reject, command, timeoutId })
-			// console.log(`ChromeExtensionClient: Stored pending request ${requestId} for command ${command}`)
 		})
 	}
 
@@ -359,7 +369,15 @@ class ChromeExtensionClient {
 			// 确保服务器运行
 			await this.startWebSocketServer()
 
-			const requestId = this.sendMessageToClient({ url }, command)
+			// 修改启动逻辑，将初始URL传递给扩展
+			// 如果提供了非about:blank的URL，扩展应直接导航到该URL而不是先创建about:blank页面
+			const useDirectNavigation = url !== "about:blank"
+			const payload = {
+				url,
+				directNavigation: useDirectNavigation,
+			}
+
+			const requestId = this.sendMessageToClient(payload, command)
 			const responseData = await this.waitForResponse(requestId, command)
 
 			// 更新内部URL状态
@@ -379,6 +397,7 @@ class ChromeExtensionClient {
 				message: `Browser launched. Current URL: ${this.currentUrl}`,
 				screenshot: responseData?.screenshot,
 				currentUrl: this.currentUrl,
+				tabId: this.targetTabId,
 			}
 		} catch (error) {
 			return {
@@ -392,7 +411,15 @@ class ChromeExtensionClient {
 		const command = "navigateToUrl"
 
 		try {
-			const requestId = this.sendMessageToClient({ url }, command)
+			// 创建导航消息，包含当前标签页ID（如果有）
+			const payload = { url }
+
+			// 如果有当前标签页ID，添加到消息中
+			if (this.targetTabId !== null) {
+				payload.tabId = this.targetTabId
+			}
+
+			const requestId = this.sendMessageToClient(payload, command)
 			// 对导航使用更长的超时时间
 			const responseData = await this.waitForResponse(requestId, command, 60000)
 
@@ -413,6 +440,7 @@ class ChromeExtensionClient {
 				message: `Navigated to ${url}. Current URL: ${this.currentUrl}`,
 				screenshot: responseData?.screenshot,
 				currentUrl: this.currentUrl,
+				tabId: this.targetTabId,
 			}
 		} catch (error) {
 			return {
@@ -424,7 +452,6 @@ class ChromeExtensionClient {
 
 	async click(coordinate) {
 		const command = "click"
-		// console.log(`ChromeExtensionClient: ${command} called (coordinate: ${coordinate})`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -436,11 +463,35 @@ class ChromeExtensionClient {
 		try {
 			const requestId = this.sendMessageToClient({ coordinate }, command)
 			const responseData = await this.waitForResponse(requestId, command, 15000)
-			// console.log(`ChromeExtensionClient: ${command} response received for ${requestId}:`, responseData)
 
 			// 更新内部URL状态
 			if (responseData?.currentUrl) {
 				this.currentUrl = responseData.currentUrl
+			}
+
+			// 处理点击后可能打开的新标签页
+			if (responseData?.newTabOpened) {
+				// 如果点击创建了新标签页并且返回了新标签页ID，则更新当前标签页ID
+				if (responseData.newTabId) {
+					console.error(`[DEBUG] Updating targetTabId from ${this.targetTabId} to ${responseData.newTabId}`)
+					this.targetTabId = responseData.newTabId
+				}
+
+				// 更新新标签页的URL
+				if (responseData.newTabUrl) {
+					this.currentUrl = responseData.newTabUrl
+				}
+
+				return {
+					status: "success",
+					message: `Clicked at ${coordinate} and opened new tab`,
+					screenshot: responseData?.screenshot,
+					currentUrl: this.currentUrl,
+					newTabOpened: true,
+					newTabId: responseData.newTabId,
+					currentTabId: this.targetTabId,
+					currentMousePosition: coordinate,
+				}
 			}
 
 			return {
@@ -463,7 +514,6 @@ class ChromeExtensionClient {
 
 	async type(text) {
 		const command = "type"
-		// console.log(`ChromeExtensionClient: ${command} called (text length: ${text?.length})`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -475,7 +525,6 @@ class ChromeExtensionClient {
 		try {
 			const requestId = this.sendMessageToClient({ text }, command)
 			const responseData = await this.waitForResponse(requestId, command, 7000 + text.length * 10)
-			// console.log(`ChromeExtensionClient: ${command} response received for ${requestId}:`, responseData)
 
 			// 更新内部URL状态
 			if (responseData?.currentUrl) {
@@ -500,7 +549,6 @@ class ChromeExtensionClient {
 
 	async pressKey(key) {
 		const command = "pressKey"
-		// console.log(`ChromeExtensionClient: ${command} called (key: ${key})`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -512,7 +560,6 @@ class ChromeExtensionClient {
 		try {
 			const requestId = this.sendMessageToClient({ key }, command)
 			const responseData = await this.waitForResponse(requestId, command, 10000)
-			// console.log(`ChromeExtensionClient: ${command} response received for ${requestId}:`, responseData)
 
 			// 更新内部URL状态
 			if (responseData?.currentUrl) {
@@ -538,7 +585,6 @@ class ChromeExtensionClient {
 
 	async scroll(direction, selector) {
 		const command = "scroll"
-		// console.log(`ChromeExtensionClient: ${command} called (direction: ${direction}, selector: ${selector})`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -556,7 +602,6 @@ class ChromeExtensionClient {
 
 			const requestId = this.sendMessageToClient(payload, command)
 			const responseData = await this.waitForResponse(requestId, command, 15000)
-			// console.log(`ChromeExtensionClient: ${command}/${direction} response received for ${requestId}:`, responseData)
 
 			// 更新内部URL状态
 			if (responseData?.currentUrl) {
@@ -581,7 +626,6 @@ class ChromeExtensionClient {
 
 	async takeScreenshot() {
 		const command = "takeScreenshot"
-		// console.log(`ChromeExtensionClient: ${command} called`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -593,7 +637,6 @@ class ChromeExtensionClient {
 		try {
 			const requestId = this.sendMessageToClient({}, command)
 			const responseData = await this.waitForResponse(requestId, command, 15000)
-			// console.log(`ChromeExtensionClient: ${command} response received for ${requestId}`)
 
 			return {
 				status: "success",
@@ -611,7 +654,6 @@ class ChromeExtensionClient {
 
 	async saveFullHtml(filename) {
 		const command = "getFullHtml"
-		// console.log(`ChromeExtensionClient: ${command} called.`)
 
 		if (!this.isLaunched()) {
 			return {
@@ -623,11 +665,9 @@ class ChromeExtensionClient {
 		try {
 			const requestId = this.sendMessageToClient({}, command)
 			const responseData = await this.waitForResponse(requestId, command, 20000)
-			// console.log(`ChromeExtensionClient: ${command} response received for ${requestId}`)
 
 			if (responseData?.htmlContent) {
 				const htmlContent = responseData.htmlContent
-				// console.log(`ChromeExtensionClient: Received HTML content (length: ${htmlContent.length})`)
 
 				// 创建临时目录保存HTML
 				const tempDir = path.join(os.tmpdir(), "chrome_extension_mcp")
@@ -638,7 +678,6 @@ class ChromeExtensionClient {
 				const fullHtmlPath = filename ? path.join(tempDir, actualFilename) : tempHtmlPath
 
 				await fs.writeFile(fullHtmlPath, htmlContent, "utf8")
-				// console.log(`ChromeExtensionClient: Full HTML saved to: ${fullHtmlPath}`)
 
 				return {
 					status: "success",
@@ -664,21 +703,11 @@ class ChromeExtensionClient {
 
 	async close() {
 		const command = "close"
-		// console.log(`ChromeExtensionClient: ${command} called.`)
 
 		if (!this.isLaunched() && !this.wss) {
 			return {
 				status: "success",
 				message: "Browser session already inactive.",
-			}
-		}
-
-		// 在关闭前保存HTML
-		if (this.isLaunched()) {
-			try {
-				await this.saveFullHtml("last_page.html")
-			} catch (error) {
-				// console.error("ChromeExtensionClient: Failed to save HTML before closing:", error)
 			}
 		}
 
@@ -712,7 +741,6 @@ class ChromeExtensionClient {
 			return // 已经释放，无需操作
 		}
 
-		// console.log("ChromeExtensionClient: Disposing resources...")
 		const disposeError = new Error("Client disposed.")
 		this.pendingRequests.forEach((req) => {
 			clearTimeout(req.timeoutId)
@@ -731,14 +759,12 @@ class ChromeExtensionClient {
 					if (err) {
 						// console.error("ChromeExtensionClient: Error closing WebSocket server during dispose:", err)
 					}
-					// console.log("ChromeExtensionClient: WebSocket server successfully closed.")
 					this.wss = null
 					this.isReady = false
 					this.targetTabId = null
 					resolve()
 				})
 			} else {
-				// console.log("ChromeExtensionClient: No WebSocket server instance to close.")
 				this.isReady = false
 				this.targetTabId = null
 				resolve()
@@ -750,7 +776,6 @@ class ChromeExtensionClient {
 
 	// 添加方法：连接成功后发送viewport配置
 	onConnected() {
-		// 删除console.log，避免干扰stdio通信
 		this.isConnected = true
 
 		// 连接成功后立即发送viewport配置，但等待客户端完全准备好
@@ -904,7 +929,7 @@ class ChromeExtensionClient {
 	 * @returns {Promise<Object>} 等待结果
 	 */
 	async wait(seconds) {
-		console.log(`[BG] 等待 ${seconds} 秒`)
+		const command = "wait"
 
 		try {
 			if (!this.isLaunched()) {
@@ -923,26 +948,209 @@ class ChromeExtensionClient {
 				}
 			}
 
-			// 将秒转换为毫秒
-			const waitTimeMs = waitTime * 1000
+			// 直接发送wait命令到扩展
+			const requestId = this.sendMessageToClient({ seconds: waitTime }, command)
+			const responseData = await this.waitForResponse(requestId, command, waitTime * 1000 + 5000) // 等待时间 + 5秒缓冲
 
-			// 简单的等待实现
-			await new Promise((resolve) => setTimeout(resolve, waitTimeMs))
-
-			// 等待后捕获当前屏幕状态
-			const screenshotDataUrl = await this.takeScreenshot()
-			const currentUrl = this.currentUrl
+			// 更新内部URL状态
+			if (responseData?.currentUrl) {
+				this.currentUrl = responseData.currentUrl
+			}
 
 			return {
 				status: "success",
 				message: `Waited for ${waitTime} seconds`,
-				screenshot: screenshotDataUrl?.screenshot,
-				currentUrl: currentUrl,
+				screenshot: responseData?.screenshot,
+				currentUrl: this.currentUrl,
 			}
 		} catch (error) {
 			return {
 				status: "error",
 				message: `Wait error: ${error.message}`,
+			}
+		}
+	}
+
+	/**
+	 * 获取所有标签页的列表
+	 * @returns {Promise<Object>} 标签页列表结果
+	 */
+	async tabList() {
+		const command = "listTabs"
+
+		try {
+			if (!this.isLaunched()) {
+				return {
+					status: "error",
+					message: "Client not connected.",
+				}
+			}
+
+			const requestId = this.sendMessageToClient({}, command)
+			const responseData = await this.waitForResponse(requestId, command, 5000)
+
+			return {
+				status: "success",
+				message: "Tab list retrieved successfully",
+				tabs: responseData?.tabs || [],
+				currentTabId: this.targetTabId,
+				screenshot: responseData?.screenshot,
+			}
+		} catch (error) {
+			return {
+				status: "error",
+				message: `Get tab list error: ${error.message}`,
+			}
+		}
+	}
+
+	/**
+	 * 创建新标签页
+	 * @param {string} url - 可选的URL，如果提供则在新标签页中打开
+	 * @returns {Promise<Object>} 新标签页结果
+	 */
+	async tabNew(url = "") {
+		const command = "newTab"
+
+		try {
+			if (!this.isLaunched()) {
+				return {
+					status: "error",
+					message: "Client not connected.",
+				}
+			}
+
+			const requestId = this.sendMessageToClient({ url }, command)
+			const responseData = await this.waitForResponse(requestId, command, 20000)
+
+			// 更新当前标签页ID和URL
+			if (responseData?.tabId) {
+				this.targetTabId = responseData.tabId
+			}
+			if (responseData?.currentUrl) {
+				this.currentUrl = responseData.currentUrl
+			} else if (responseData?.url && url) {
+				this.currentUrl = url
+			}
+
+			return {
+				status: "success",
+				message: url ? `New tab created and navigated to ${url}` : "New blank tab created",
+				tabId: this.targetTabId,
+				currentUrl: this.currentUrl,
+				screenshot: responseData?.screenshot,
+			}
+		} catch (error) {
+			return {
+				status: "error",
+				message: `Create new tab error: ${error.message}`,
+			}
+		}
+	}
+
+	/**
+	 * 选择并切换到指定索引的标签页
+	 * @param {number} index - 标签页索引
+	 * @returns {Promise<Object>} 标签页切换结果
+	 */
+	async tabSelect(index) {
+		const command = "selectTab"
+
+		try {
+			if (!this.isLaunched()) {
+				return {
+					status: "error",
+					message: "Client not connected.",
+				}
+			}
+
+			// 验证输入
+			const tabIndex = Number(index)
+			if (isNaN(tabIndex) || tabIndex < 0) {
+				return {
+					status: "error",
+					message: `Invalid tab index: ${index}. Must be a non-negative number.`,
+				}
+			}
+
+			const requestId = this.sendMessageToClient({ index: tabIndex }, command)
+			const responseData = await this.waitForResponse(requestId, command, 10000)
+
+			// 更新当前标签页ID和URL
+			if (responseData?.tabId) {
+				this.targetTabId = responseData.tabId
+			}
+			if (responseData?.currentUrl) {
+				this.currentUrl = responseData.currentUrl
+			}
+
+			return {
+				status: "success",
+				message: `Switched to tab at index ${tabIndex}`,
+				tabId: this.targetTabId,
+				currentUrl: this.currentUrl,
+				screenshot: responseData?.screenshot,
+			}
+		} catch (error) {
+			return {
+				status: "error",
+				message: `Select tab error: ${error.message}`,
+			}
+		}
+	}
+
+	/**
+	 * 关闭指定索引的标签页
+	 * @param {number} index - 可选的标签页索引，如果不提供则关闭当前标签页
+	 * @returns {Promise<Object>} 标签页关闭结果
+	 */
+	async tabClose(index) {
+		const command = "closeTab"
+
+		try {
+			if (!this.isLaunched()) {
+				return {
+					status: "error",
+					message: "Client not connected.",
+				}
+			}
+
+			// 构建参数，仅当提供索引时包含
+			const params = {}
+			if (index !== undefined) {
+				// 验证输入
+				const tabIndex = Number(index)
+				if (isNaN(tabIndex) || tabIndex < 0) {
+					return {
+						status: "error",
+						message: `Invalid tab index: ${index}. Must be a non-negative number.`,
+					}
+				}
+				params.index = tabIndex
+			}
+
+			const requestId = this.sendMessageToClient(params, command)
+			const responseData = await this.waitForResponse(requestId, command, 10000)
+
+			// 更新当前标签页ID和URL
+			if (responseData?.tabId) {
+				this.targetTabId = responseData.tabId
+			}
+			if (responseData?.currentUrl) {
+				this.currentUrl = responseData.currentUrl
+			}
+
+			return {
+				status: "success",
+				message: index !== undefined ? `Closed tab at index ${index}` : "Closed current tab",
+				tabId: this.targetTabId,
+				currentUrl: this.currentUrl,
+				screenshot: responseData?.screenshot,
+			}
+		} catch (error) {
+			return {
+				status: "error",
+				message: `Close tab error: ${error.message}`,
 			}
 		}
 	}
@@ -958,11 +1166,26 @@ function formatResponse(result) {
 	// 处理内容
 	const content = []
 
-	// 添加基本信息作为文本
+	// 提取需要作为文本显示的字段
 	const basicInfo = {
 		status: result.status,
 		message: result.message,
 		currentUrl: result.currentUrl,
+	}
+
+	// 如果有标签页列表，添加到基本信息中 (确保总是将tabs放入响应)
+	basicInfo.tabs = Array.isArray(result.tabs) ? result.tabs : []
+
+	// 如果有tabId，添加到基本信息中
+	if (result.tabId) {
+		basicInfo.tabId = result.tabId
+	}
+
+	// 如果有newTabOpened等特殊字段，添加到基本信息中
+	if (result.newTabOpened) {
+		basicInfo.newTabOpened = result.newTabOpened
+		if (result.newTabId) basicInfo.newTabId = result.newTabId
+		if (result.newTabUrl) basicInfo.newTabUrl = result.newTabUrl
 	}
 
 	content.push({
@@ -972,15 +1195,24 @@ function formatResponse(result) {
 
 	// 如果有截图，添加为图像类型
 	if (result.screenshot && typeof result.screenshot === "string" && result.screenshot.startsWith("data:image")) {
-		// 提取base64数据部分
-		const base64Data = result.screenshot.split(",")[1]
-		const mimeType = result.screenshot.split(",")[0].split(":")[1].split(";")[0]
+		try {
+			// 提取base64数据部分
+			const base64Data = result.screenshot.split(",")[1]
+			const mimeType = result.screenshot.split(",")[0].split(":")[1].split(";")[0]
 
-		content.push({
-			type: "image",
-			data: base64Data,
-			mimeType: mimeType || "image/jpeg",
-		})
+			content.push({
+				type: "image",
+				data: base64Data,
+				mimeType: mimeType || "image/jpeg",
+			})
+		} catch (error) {
+			console.error("Error processing screenshot in formatResponse:", error)
+			// 添加错误信息到响应中
+			content.push({
+				type: "text",
+				text: JSON.stringify({ error: "Failed to process screenshot", details: error.message }),
+			})
+		}
 	}
 
 	return { content }
@@ -1115,38 +1347,6 @@ server.tool(
 	},
 )
 
-// 注册工具：MCP Browser Snapshot
-server.tool(
-	"snapshot",
-	"Capture snapshot of the current page",
-	{
-		purpose: z.string().describe("give any string, workaround for no-parameter tools."),
-	},
-	async (params) => {
-		try {
-			if (!chromeClient.isLaunched()) {
-				await chromeClient.initialize()
-				await chromeClient.launch()
-			}
-
-			const result = await chromeClient.takeScreenshot()
-			return formatResponse(result)
-		} catch (error) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: JSON.stringify({
-							status: "error",
-							message: `Error taking snapshot: ${error.message}`,
-						}),
-					},
-				],
-			}
-		}
-	},
-)
-
 // 注册工具：MCP Browser Close
 server.tool(
 	"close",
@@ -1213,38 +1413,6 @@ server.tool(
 						text: JSON.stringify({
 							status: "error",
 							message: `Error scrolling: ${error.message}`,
-						}),
-					},
-				],
-			}
-		}
-	},
-)
-
-// 注册工具：MCP Browser Take Screenshot
-server.tool(
-	"take_screenshot",
-	"Take a screenshot of the current page",
-	{
-		raw: z.boolean().optional().describe("Whether to return without compression"),
-	},
-	async (params) => {
-		try {
-			if (!chromeClient.isLaunched()) {
-				await chromeClient.initialize()
-				await chromeClient.launch()
-			}
-
-			const result = await chromeClient.takeScreenshot()
-			return formatResponse(result)
-		} catch (error) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: JSON.stringify({
-							status: "error",
-							message: `Error taking screenshot: ${error.message}`,
 						}),
 					},
 				],
@@ -1345,7 +1513,7 @@ server.tool(
 
 // 注册工具：MCP Browser Area Screenshot
 server.tool(
-	"mcp_browser_area_screenshot",
+	"area_screenshot",
 	"Take a screenshot of a specific area of the current page",
 	{
 		topLeft: z.string().describe("Top-left coordinate (x,y) of the area to capture"),
@@ -1403,7 +1571,7 @@ server.tool(
 
 // 注册工具：MCP Browser Get Saved Screenshots
 server.tool(
-	"mcp_browser_get_saved_screenshots",
+	"get_saved_screenshots",
 	"Get a list of all saved screenshots",
 	{
 		purpose: z.string().describe("give any string, workaround for no-parameter tools."),
@@ -1442,8 +1610,8 @@ server.tool(
 
 // 注册工具：MCP Browser Wait
 server.tool(
-	"mcp_browser_wait",
-	"Wait for a specified number of seconds",
+	"wait",
+	"Wait for a specified number of seconds, with a screenshot of the current page state after waiting",
 	{
 		seconds: z.number().describe("Number of seconds to wait"),
 	},
@@ -1464,6 +1632,134 @@ server.tool(
 						text: JSON.stringify({
 							status: "error",
 							message: `Error waiting: ${error.message}`,
+						}),
+					},
+				],
+			}
+		}
+	},
+)
+
+// 注册工具：MCP Browser Tab List
+server.tool(
+	"tab_list",
+	"List browser tabs",
+	{
+		purpose: z.string().describe("give any string, workaround for no-parameter tools."),
+	},
+	async (params) => {
+		try {
+			if (!chromeClient.isLaunched()) {
+				await chromeClient.initialize()
+				await chromeClient.launch()
+			}
+
+			const result = await chromeClient.tabList()
+			return formatResponse(result)
+		} catch (error) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							status: "error",
+							message: `Error listing tabs: ${error.message}`,
+						}),
+					},
+				],
+			}
+		}
+	},
+)
+
+// 注册工具：MCP Browser Tab New
+server.tool(
+	"tab_new",
+	"Open a new tab",
+	{
+		url: z.string().optional().describe("The URL to navigate to in the new tab. If not provided, the new tab will be blank."),
+	},
+	async (params) => {
+		try {
+			if (!chromeClient.isLaunched()) {
+				await chromeClient.initialize()
+				await chromeClient.launch()
+			}
+
+			const result = await chromeClient.tabNew(params.url)
+			return formatResponse(result)
+		} catch (error) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							status: "error",
+							message: `Error creating new tab: ${error.message}`,
+						}),
+					},
+				],
+			}
+		}
+	},
+)
+
+// 注册工具：MCP Browser Tab Select
+server.tool(
+	"tab_select",
+	"Select a tab by index",
+	{
+		index: z.number().describe("The index of the tab to select"),
+	},
+	async (params) => {
+		try {
+			if (!chromeClient.isLaunched()) {
+				await chromeClient.initialize()
+				await chromeClient.launch()
+			}
+
+			const result = await chromeClient.tabSelect(params.index)
+			return formatResponse(result)
+		} catch (error) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							status: "error",
+							message: `Error selecting tab: ${error.message}`,
+						}),
+					},
+				],
+			}
+		}
+	},
+)
+
+// 注册工具：MCP Browser Tab Close
+server.tool(
+	"tab_close",
+	"Close a tab",
+	{
+		index: z.number().optional().describe("The index of the tab to close. Closes current tab if not provided."),
+	},
+	async (params) => {
+		try {
+			if (!chromeClient.isLaunched()) {
+				await chromeClient.initialize()
+				await chromeClient.launch()
+			}
+
+			const result = await chromeClient.tabClose(params.index)
+			return formatResponse(result)
+		} catch (error) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							status: "error",
+							message: `Error closing tab: ${error.message}`,
 						}),
 					},
 				],
