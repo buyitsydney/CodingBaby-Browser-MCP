@@ -1,14 +1,14 @@
 {
 	"name": "@sydneyassistent/codingbaby-browser-mcp",
-	"version": "1.0.8",
+	"version": "1.1.6",
 	"description": "MCP tool for communicating with a Chrome extension via WebSocket",
-	"main": "chrome-server.js",
+	"main": "index.js",
 	"type": "module",
 	"bin": {
-		"codingbaby-browser-mcp": "chrome-server.js"
+		"codingbaby-browser-mcp": "index.js"
 	},
 	"scripts": {
-		"start": "node chrome-server.js"
+		"start": "node index.js"
 	},
 	"keywords": [
 		"mcp",
